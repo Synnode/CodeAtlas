@@ -16,7 +16,8 @@ import { z } from "zod";
 import matter from "gray-matter";
 import * as fs from "fs";
 import { readAllPages, extractWikiLinks, resolvePage } from "../lib/wiki-fs";
-import { getPageEmbedTime } from "../lib/vector-store";
+import { getPageContentHash } from "../lib/vector-store";
+import { bodyHash } from "../lib/content-hash";
 import { getDb } from "../db";
 
 export const WikiLintSchema = z.object({
@@ -169,13 +170,8 @@ export async function wikiLint(input: WikiLintInput = {}): Promise<WikiLintOutpu
       missingFrontmatter.push({ page: page.name, missing });
     }
 
-    const embedTime = getPageEmbedTime(db, page.name);
-    if (fm["updated"] && typeof fm["updated"] === "string") {
-      const updatedDate = new Date(fm["updated"] as string);
-      if (!embedTime || updatedDate > embedTime) {
-        staleEmbeddings.push(page.name);
-      }
-    } else if (!embedTime) {
+    const storedHash = getPageContentHash(db, page.name);
+    if (storedHash === null || storedHash !== bodyHash(page.body)) {
       staleEmbeddings.push(page.name);
     }
 

@@ -56,6 +56,7 @@ const gray_matter_1 = __importDefault(require("gray-matter"));
 const fs = __importStar(require("fs"));
 const wiki_fs_1 = require("../lib/wiki-fs");
 const vector_store_1 = require("../lib/vector-store");
+const content_hash_1 = require("../lib/content-hash");
 const db_1 = require("../db");
 exports.WikiLintSchema = zod_1.z.object({
     fix: zod_1.z
@@ -167,14 +168,8 @@ async function wikiLint(input = {}) {
         if (missing.length > 0) {
             missingFrontmatter.push({ page: page.name, missing });
         }
-        const embedTime = (0, vector_store_1.getPageEmbedTime)(db, page.name);
-        if (fm["updated"] && typeof fm["updated"] === "string") {
-            const updatedDate = new Date(fm["updated"]);
-            if (!embedTime || updatedDate > embedTime) {
-                staleEmbeddings.push(page.name);
-            }
-        }
-        else if (!embedTime) {
+        const storedHash = (0, vector_store_1.getPageContentHash)(db, page.name);
+        if (storedHash === null || storedHash !== (0, content_hash_1.bodyHash)(page.body)) {
             staleEmbeddings.push(page.name);
         }
         const candidates = extractConceptCandidates(page.body);

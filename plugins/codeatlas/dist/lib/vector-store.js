@@ -8,6 +8,8 @@
  *   wiki_meta(key, value)            — server metadata (embedding_dim, etc.)
  *   wiki_chunks(id, page, chunk_idx, content, embedded_at)
  *   wiki_vectors USING vec0(embedding FLOAT[N])  — N detected from Ollama
+ *   wiki_page_meta(page, content_hash, embedded_at) — per-page body hash for
+ *     hash-based staleness detection (replaces the old date-comparison heuristic)
  *
  * wiki_chunks.rowid maps 1:1 to wiki_vectors.rowid.
  */
@@ -51,11 +53,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getChunkVectorsForPage = getChunkVectorsForPage;
 exports.getStoredDimension = getStoredDimension;
 exports.initDb = initDb;
+exports.setPageContentHash = setPageContentHash;
+exports.getPageContentHash = getPageContentHash;
 exports.deletePageVectors = deletePageVectors;
 exports.renamePageVectors = renamePageVectors;
 exports.upsertPage = upsertPage;
 exports.searchSimilar = searchSimilar;
-exports.getPageEmbedTime = getPageEmbedTime;
 const fs_1 = require("fs");
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const sqliteVec = __importStar(require("sqlite-vec"));
@@ -159,10 +162,41 @@ function initDb(dbPath, embeddingDim) {
       embedding FLOAT[${embeddingDim}]
     );
   `);
+    // Per-page content hash for staleness detection.
+    // Backwards-compat: existing DBs upgrade in place — pages without a row
+    // are treated as stale on first run, then stabilise.
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS wiki_page_meta (
+      page         TEXT PRIMARY KEY,
+      content_hash TEXT NOT NULL,
+      embedded_at  TEXT NOT NULL
+    );
+  `);
     return db;
 }
 /**
- * Deletes all chunks and vectors for a page.
+ * Stores the body hash for a page. Called after a successful upsertPage so
+ * staleness checks can compare against it.
+ */
+function setPageContentHash(db, page, contentHash) {
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO wiki_page_meta (page, content_hash, embedded_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(page) DO UPDATE SET content_hash = excluded.content_hash,
+                                     embedded_at  = excluded.embedded_at`).run(page, contentHash, now);
+}
+/**
+ * Returns the stored body hash for a page, or null if none is recorded
+ * (page was never embedded, or DB predates the hash column).
+ */
+function getPageContentHash(db, page) {
+    const row = db
+        .prepare("SELECT content_hash FROM wiki_page_meta WHERE page = ?")
+        .get(page);
+    return row?.content_hash ?? null;
+}
+/**
+ * Deletes all chunks, vectors, and meta for a page.
  */
 function deletePageVectors(db, page) {
     const existingIds = db
@@ -174,12 +208,14 @@ function deletePageVectors(db, page) {
         db.prepare(`DELETE FROM wiki_vectors WHERE rowid IN (${placeholders})`).run(...ids);
         db.prepare("DELETE FROM wiki_chunks WHERE page = ?").run(page);
     }
+    db.prepare("DELETE FROM wiki_page_meta WHERE page = ?").run(page);
 }
 /**
- * Renames a page in the chunks table (vectors stay valid — content unchanged).
+ * Renames a page in the chunks + meta tables (vectors stay valid — content unchanged).
  */
 function renamePageVectors(db, oldPage, newPage) {
     db.prepare("UPDATE wiki_chunks SET page = ? WHERE page = ?").run(newPage, oldPage);
+    db.prepare("UPDATE wiki_page_meta SET page = ? WHERE page = ?").run(newPage, oldPage);
 }
 /**
  * Upserts all chunk vectors for a page.
@@ -236,18 +272,5 @@ function searchSimilar(db, queryVec, k) {
         chunkIdx: row.chunk_idx,
         rowid: row.rowid,
     }));
-}
-/**
- * Gets the most recent embedding timestamp for a page.
- * Returns null if the page has no embeddings.
- */
-function getPageEmbedTime(db, page) {
-    const row = db
-        .prepare(`SELECT embedded_at FROM wiki_chunks WHERE page = ?
-       ORDER BY embedded_at DESC LIMIT 1`)
-        .get(page);
-    if (!row)
-        return null;
-    return new Date(row.embedded_at);
 }
 //# sourceMappingURL=vector-store.js.map

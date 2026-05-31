@@ -19,6 +19,7 @@ const config_1 = require("./config");
 const wiki_get_1 = require("./tools/wiki-get");
 const wiki_search_1 = require("./tools/wiki-search");
 const wiki_update_1 = require("./tools/wiki-update");
+const wiki_patch_1 = require("./tools/wiki-patch");
 const wiki_ingest_1 = require("./tools/wiki-ingest");
 const wiki_lint_1 = require("./tools/wiki-lint");
 const wiki_reembed_all_1 = require("./tools/wiki-reembed-all");
@@ -64,6 +65,11 @@ async function main() {
                     name: "wiki_update",
                     description: "Create a new wiki page or update an existing one. Validates frontmatter, writes to disk, and re-embeds the page in the vector store.",
                     inputSchema: zodToJsonSchema(wiki_update_1.WikiUpdateSchema),
+                },
+                {
+                    name: "wiki_patch",
+                    description: "Surgical, in-place edit of an existing wiki page by exact string replacement (like the host Edit tool). Auto-bumps 'updated' to today, re-embeds only affected chunks. Prefer over wiki_update for small edits to long pages — avoids re-sending the full body. Errors if old_string is absent, or non-unique unless replace_all is true.",
+                    inputSchema: zodToJsonSchema(wiki_patch_1.WikiPatchSchema),
                 },
                 {
                     name: "wiki_ingest",
@@ -121,6 +127,11 @@ async function main() {
                 case "wiki_update": {
                     const input = wiki_update_1.WikiUpdateSchema.parse(args);
                     const result = await (0, wiki_update_1.wikiUpdate)(input);
+                    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+                }
+                case "wiki_patch": {
+                    const input = wiki_patch_1.WikiPatchSchema.parse(args);
+                    const result = await (0, wiki_patch_1.wikiPatch)(input);
                     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
                 }
                 case "wiki_ingest": {

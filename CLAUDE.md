@@ -66,6 +66,10 @@ Release script: bumps version in `package.json` AND `plugin.json` atomically, bu
 
 **`wiki_ingest` does not call Claude** — it returns a structured payload (`raw_files`, `existing_pages`, `instructions`) and expects Claude to call `wiki_update` for each page. The MCP server itself has no Anthropic SDK dependency.
 
+**Always re-embed via `reembedPageBody`** — `lib/page-embed.ts` is the single codepath for incremental page re-embedding. It does the chunk diff, embeds only changed chunks, calls `upsertPage`, **and** writes the per-page body hash via `setPageContentHash`. Never call `upsertPage` directly from a tool — bypassing the helper leaves `wiki_page_meta` stale, which causes the page to be flagged as stale on every subsequent `wiki_reembed_all` / `wiki_lint` run.
+
+**Staleness is hash-based, not date-based** — `wiki_reembed_all` and `wiki_lint` compare `bodyHash(body)` (sha256 over `matter().content`, frontmatter excluded) against the value in `wiki_page_meta`. `updated:` is purely human-facing metadata. A null stored hash → page is treated as stale (covers pre-v1.6 DBs and pages that have never been embedded).
+
 ## Environment variables
 
 | Variable | Required | Default | Description |

@@ -16,9 +16,7 @@ const zod_1 = require("zod");
 const child_process_1 = require("child_process");
 const gray_matter_1 = __importDefault(require("gray-matter"));
 const wiki_fs_1 = require("../lib/wiki-fs");
-const chunker_1 = require("../lib/chunker");
-const embedder_1 = require("../lib/embedder");
-const vector_store_1 = require("../lib/vector-store");
+const page_embed_1 = require("../lib/page-embed");
 const tfidf_1 = require("../lib/tfidf");
 const db_1 = require("../db");
 exports.WikiUpdateSchema = zod_1.z.object({
@@ -84,6 +82,8 @@ async function wikiUpdate(input) {
             ...(missingLinks.length > 0 ? { missing_links: missingLinks } : {}),
         };
     }
+    // Capture existence before writing so the git commit message can pick the right verb
+    const pagePreexisted = (0, wiki_fs_1.pageExists)(page);
     // Write page to disk
     let filePath;
     try {
@@ -96,51 +96,17 @@ async function wikiUpdate(input) {
             code: "WRITE_ERROR",
         };
     }
-    // Chunk the page body for embedding
-    const chunks = (0, chunker_1.chunkPage)(page, parsed.content);
-    // Incremental embedding: reuse existing vectors for unchanged chunks
+    // Re-embed (incremental) + write content hash
     const db = (0, db_1.getDb)();
-    const existingVectors = (0, vector_store_1.getChunkVectorsForPage)(db, page);
-    const existingByIdx = new Map(existingVectors.map((v) => [v.chunk_idx, v]));
-    const toEmbed = [];
-    const recycled = [];
-    for (const chunk of chunks) {
-        const existing = existingByIdx.get(chunk.chunk_idx);
-        if (existing && existing.content === chunk.content) {
-            recycled.push({ chunk_idx: chunk.chunk_idx, content: chunk.content, embedding: existing.embedding });
-        }
-        else {
-            toEmbed.push(chunk);
-        }
-    }
-    let newEmbeddings = [];
-    if (toEmbed.length > 0) {
-        try {
-            newEmbeddings = await (0, embedder_1.embedBatch)(toEmbed.map((c) => c.content));
-        }
-        catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            return {
-                error: `Failed to generate embeddings via Ollama: ${message}`,
-                code: "EMBEDDING_ERROR",
-            };
-        }
-    }
-    const freshVectors = toEmbed.map((chunk, i) => ({
-        chunk_idx: chunk.chunk_idx,
-        content: chunk.content,
-        embedding: newEmbeddings[i],
-    }));
-    const allVectors = [...recycled, ...freshVectors].sort((a, b) => a.chunk_idx - b.chunk_idx);
-    // Upsert into vector store
+    let reembed;
     try {
-        (0, vector_store_1.upsertPage)(db, page, allVectors);
+        reembed = await (0, page_embed_1.reembedPageBody)(db, page, parsed.content);
     }
     catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return {
-            error: `Failed to upsert vectors into database: ${message}`,
-            code: "DB_ERROR",
+            error: `Failed to re-embed page: ${message}`,
+            code: "EMBEDDING_ERROR",
         };
     }
     // Invalidate TF-IDF index so it's rebuilt on next search
@@ -150,7 +116,7 @@ async function wikiUpdate(input) {
     if (git_commit) {
         try {
             (0, child_process_1.execFileSync)("git", ["add", filePath], { stdio: "pipe" });
-            const verb = existingVectors.length === 0 ? "create" : "update";
+            const verb = pagePreexisted ? "update" : "create";
             (0, child_process_1.execFileSync)("git", ["commit", "-m", `wiki: ${verb} ${page}`], { stdio: "pipe" });
             gitCommitted = true;
         }
@@ -160,8 +126,8 @@ async function wikiUpdate(input) {
     }
     return {
         success: true,
-        chunks_embedded: toEmbed.length,
-        chunks_skipped: recycled.length,
+        chunks_embedded: reembed.embedded,
+        chunks_skipped: reembed.skipped,
         path: filePath,
         ...(gitCommitted !== undefined ? { git_committed: gitCommitted } : {}),
         ...(missingLinks.length > 0 ? { missing_links: missingLinks } : {}),

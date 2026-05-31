@@ -60,6 +60,20 @@ wiki_update({ page: "AuthMiddleware", content: "...", dry_run: true })  // previ
 wiki_update({ page: "AuthMiddleware", content: "...", git_commit: true })
 ```
 
+### Surgical edit (prefer for small changes to long pages)
+```
+wiki_patch({
+  page: "AuthMiddleware",
+  old_string: "| token-ttl | 15m |",     // must be unique within the page body
+  new_string: "| token-ttl | 30m |",
+})
+wiki_patch({ page: "...", old_string: "...", new_string: "...", replace_all: true })
+```
+Use `wiki_patch` instead of `wiki_update` whenever you only need to change a
+few lines on a long page — it costs far fewer tokens than re-sending the full
+body, and `updated:` is auto-bumped for you. Fall back to `wiki_update` for
+new pages, full rewrites, or structural changes.
+
 ### Maintenance
 ```
 wiki_lint()                          // health check — run after big changes

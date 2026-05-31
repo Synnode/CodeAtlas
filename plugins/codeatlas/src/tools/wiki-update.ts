@@ -10,9 +10,7 @@ import { z } from "zod";
 import { execFileSync } from "child_process";
 import matter from "gray-matter";
 import { readPage, writePage, validateFrontmatter, extractWikiLinks, pageExists } from "../lib/wiki-fs";
-import { chunkPage } from "../lib/chunker";
-import { embedBatch } from "../lib/embedder";
-import { upsertPage, ChunkVector, getChunkVectorsForPage } from "../lib/vector-store";
+import { reembedPageBody } from "../lib/page-embed";
 import { invalidateIndex } from "../lib/tfidf";
 import { getDb } from "../db";
 
@@ -110,6 +108,9 @@ export async function wikiUpdate(input: WikiUpdateInput): Promise<WikiUpdateResu
     };
   }
 
+  // Capture existence before writing so the git commit message can pick the right verb
+  const pagePreexisted = pageExists(page);
+
   // Write page to disk
   let filePath: string;
   try {
@@ -122,55 +123,16 @@ export async function wikiUpdate(input: WikiUpdateInput): Promise<WikiUpdateResu
     };
   }
 
-  // Chunk the page body for embedding
-  const chunks = chunkPage(page, parsed.content);
-
-  // Incremental embedding: reuse existing vectors for unchanged chunks
+  // Re-embed (incremental) + write content hash
   const db = getDb();
-  const existingVectors = getChunkVectorsForPage(db, page);
-  const existingByIdx = new Map(existingVectors.map((v) => [v.chunk_idx, v]));
-
-  const toEmbed: typeof chunks = [];
-  const recycled: ChunkVector[] = [];
-
-  for (const chunk of chunks) {
-    const existing = existingByIdx.get(chunk.chunk_idx);
-    if (existing && existing.content === chunk.content) {
-      recycled.push({ chunk_idx: chunk.chunk_idx, content: chunk.content, embedding: existing.embedding });
-    } else {
-      toEmbed.push(chunk);
-    }
-  }
-
-  let newEmbeddings: number[][] = [];
-  if (toEmbed.length > 0) {
-    try {
-      newEmbeddings = await embedBatch(toEmbed.map((c) => c.content));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        error: `Failed to generate embeddings via Ollama: ${message}`,
-        code: "EMBEDDING_ERROR",
-      };
-    }
-  }
-
-  const freshVectors: ChunkVector[] = toEmbed.map((chunk, i) => ({
-    chunk_idx: chunk.chunk_idx,
-    content: chunk.content,
-    embedding: newEmbeddings[i],
-  }));
-
-  const allVectors = [...recycled, ...freshVectors].sort((a, b) => a.chunk_idx - b.chunk_idx);
-
-  // Upsert into vector store
+  let reembed;
   try {
-    upsertPage(db, page, allVectors);
+    reembed = await reembedPageBody(db, page, parsed.content);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
-      error: `Failed to upsert vectors into database: ${message}`,
-      code: "DB_ERROR",
+      error: `Failed to re-embed page: ${message}`,
+      code: "EMBEDDING_ERROR",
     };
   }
 
@@ -182,7 +144,7 @@ export async function wikiUpdate(input: WikiUpdateInput): Promise<WikiUpdateResu
   if (git_commit) {
     try {
       execFileSync("git", ["add", filePath], { stdio: "pipe" });
-      const verb = existingVectors.length === 0 ? "create" : "update";
+      const verb = pagePreexisted ? "update" : "create";
       execFileSync("git", ["commit", "-m", `wiki: ${verb} ${page}`], { stdio: "pipe" });
       gitCommitted = true;
     } catch {
@@ -192,8 +154,8 @@ export async function wikiUpdate(input: WikiUpdateInput): Promise<WikiUpdateResu
 
   return {
     success: true,
-    chunks_embedded: toEmbed.length,
-    chunks_skipped: recycled.length,
+    chunks_embedded: reembed.embedded,
+    chunks_skipped: reembed.skipped,
     path: filePath,
     ...(gitCommitted !== undefined ? { git_committed: gitCommitted } : {}),
     ...(missingLinks.length > 0 ? { missing_links: missingLinks } : {}),

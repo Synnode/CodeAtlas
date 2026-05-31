@@ -7,6 +7,8 @@
  *   wiki_meta(key, value)            — server metadata (embedding_dim, etc.)
  *   wiki_chunks(id, page, chunk_idx, content, embedded_at)
  *   wiki_vectors USING vec0(embedding FLOAT[N])  — N detected from Ollama
+ *   wiki_page_meta(page, content_hash, embedded_at) — per-page body hash for
+ *     hash-based staleness detection (replaces the old date-comparison heuristic)
  *
  * wiki_chunks.rowid maps 1:1 to wiki_vectors.rowid.
  */
@@ -45,11 +47,21 @@ export declare function getStoredDimension(dbPath: string): number | null;
  */
 export declare function initDb(dbPath: string, embeddingDim: number): DB;
 /**
- * Deletes all chunks and vectors for a page.
+ * Stores the body hash for a page. Called after a successful upsertPage so
+ * staleness checks can compare against it.
+ */
+export declare function setPageContentHash(db: DB, page: string, contentHash: string): void;
+/**
+ * Returns the stored body hash for a page, or null if none is recorded
+ * (page was never embedded, or DB predates the hash column).
+ */
+export declare function getPageContentHash(db: DB, page: string): string | null;
+/**
+ * Deletes all chunks, vectors, and meta for a page.
  */
 export declare function deletePageVectors(db: DB, page: string): void;
 /**
- * Renames a page in the chunks table (vectors stay valid — content unchanged).
+ * Renames a page in the chunks + meta tables (vectors stay valid — content unchanged).
  */
 export declare function renamePageVectors(db: DB, oldPage: string, newPage: string): void;
 /**
@@ -62,9 +74,4 @@ export declare function upsertPage(db: DB, page: string, chunks: ChunkVector[]):
  * Returns top k results sorted by similarity (descending).
  */
 export declare function searchSimilar(db: DB, queryVec: number[], k: number): SearchResult[];
-/**
- * Gets the most recent embedding timestamp for a page.
- * Returns null if the page has no embeddings.
- */
-export declare function getPageEmbedTime(db: DB, page: string): Date | null;
 //# sourceMappingURL=vector-store.d.ts.map

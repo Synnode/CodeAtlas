@@ -24,6 +24,7 @@ import { config } from "./config";
 import { wikiGet, WikiGetSchema } from "./tools/wiki-get";
 import { wikiSearch, WikiSearchSchema } from "./tools/wiki-search";
 import { wikiUpdate, WikiUpdateSchema } from "./tools/wiki-update";
+import { wikiPatch, WikiPatchSchema } from "./tools/wiki-patch";
 import { wikiIngest, WikiIngestSchema, WikiIngestBaseSchema } from "./tools/wiki-ingest";
 import { wikiLint, WikiLintSchema } from "./tools/wiki-lint";
 import { wikiReembedAll, WikiReembedAllSchema } from "./tools/wiki-reembed-all";
@@ -79,6 +80,12 @@ async function main(): Promise<void> {
           description:
             "Create a new wiki page or update an existing one. Validates frontmatter, writes to disk, and re-embeds the page in the vector store.",
           inputSchema: zodToJsonSchema(WikiUpdateSchema),
+        },
+        {
+          name: "wiki_patch",
+          description:
+            "Surgical, in-place edit of an existing wiki page by exact string replacement (like the host Edit tool). Auto-bumps 'updated' to today, re-embeds only affected chunks. Prefer over wiki_update for small edits to long pages — avoids re-sending the full body. Errors if old_string is absent, or non-unique unless replace_all is true.",
+          inputSchema: zodToJsonSchema(WikiPatchSchema),
         },
         {
           name: "wiki_ingest",
@@ -147,6 +154,12 @@ async function main(): Promise<void> {
         case "wiki_update": {
           const input = WikiUpdateSchema.parse(args);
           const result = await wikiUpdate(input);
+          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        }
+
+        case "wiki_patch": {
+          const input = WikiPatchSchema.parse(args);
+          const result = await wikiPatch(input);
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
 

@@ -37,6 +37,13 @@
 - Schema — replace custom `zodToJsonSchema` with `zod-to-json-schema` (array `items` now correct)
 - Release script — atomic version bump across `package.json` + `plugin.json`, build, tag, publish
 
+## ✅ v1.6 — Surgical edits & reliable staleness
+
+- `wiki_patch` — exact-string surgical page edit (`old_string`/`new_string`, `replace_all`), auto-bumps `updated`, re-embeds only affected chunks. Avoids full-page resends for small edits to long pages.
+- Content-hash staleness — `wiki_reembed_all` and `wiki_lint` now compare per-page body hashes (sha256 over body, excl. frontmatter) instead of `updated:` date vs embed timestamp. Same-day and out-of-band edits are detected reliably.
+- New `wiki_page_meta` table holds the per-page hash; backwards-compat via `CREATE TABLE IF NOT EXISTS` — first run after upgrade treats all pages as stale once, then stabilises.
+- Shared `reembedPageBody` helper consolidates incremental re-embedding across `wiki_update`, `wiki_patch`, `wiki_reembed_all`.
+
 ## Backlog / next
 
 - **OpenAI / local embedding fallback** — configurable embedding provider, not Ollama-only
@@ -45,3 +52,4 @@
 - **`/wiki-update` slash command** — convenience wrapper around `wiki_update` MCP tool
 - **Watch mode** — auto-ingest on file change in `RAW_ROOT`
 - **Page templates** — frontmatter scaffolding for common page types
+- **`wiki_patch` heading mode** — second mode keyed by `## heading` for replace/append of whole sections. Deferred from v1.6; the `old_string`/`new_string` path covers the common case.

@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { readAllPages } from "../lib/wiki-fs";
-import { chunkPage } from "../lib/chunker";
-import { embedBatch } from "../lib/embedder";
-import { upsertPage, ChunkVector, getPageEmbedTime } from "../lib/vector-store";
+import { getPageContentHash } from "../lib/vector-store";
+import { bodyHash } from "../lib/content-hash";
+import { reembedPageBody } from "../lib/page-embed";
 import { invalidateIndex } from "../lib/tfidf";
 import { getDb } from "../db";
 
@@ -11,7 +11,7 @@ export const WikiReembedAllSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      "If true (default), only re-embed pages where 'updated' date is newer than last embed. If false, re-embed all pages."
+      "If true (default), only re-embed pages whose body hash differs from the stored hash. If false, re-embed all pages."
     ),
 });
 
@@ -48,29 +48,18 @@ export async function wikiReembedAll(input: WikiReembedAllInput): Promise<WikiRe
   const errors: Array<{ page: string; error: string }> = [];
 
   for (const page of pages) {
-    const fm = page.frontmatter;
-
     if (staleOnly) {
-      const embedTime = getPageEmbedTime(db, page.name);
-      const isStale = fm["updated"] && typeof fm["updated"] === "string"
-        ? !embedTime || new Date(fm["updated"] as string) > embedTime
-        : !embedTime;
-
-      if (!isStale) {
+      const storedHash = getPageContentHash(db, page.name);
+      const currentHash = bodyHash(page.body);
+      // No stored hash → never embedded (or DB pre-dates hash column) → stale.
+      if (storedHash !== null && storedHash === currentHash) {
         skipped.push(page.name);
         continue;
       }
     }
 
     try {
-      const chunks = chunkPage(page.name, page.body);
-      const embeddings = await embedBatch(chunks.map((c) => c.content));
-      const chunkVectors: ChunkVector[] = chunks.map((chunk, i) => ({
-        chunk_idx: chunk.chunk_idx,
-        content: chunk.content,
-        embedding: embeddings[i],
-      }));
-      upsertPage(db, page.name, chunkVectors);
+      await reembedPageBody(db, page.name, page.body);
       reembedded.push(page.name);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

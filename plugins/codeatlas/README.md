@@ -45,12 +45,18 @@ claude plugin install github:synnode/codeatlas
 | `wiki_search` | Hybrid semantic + TF-IDF keyword search |
 | `wiki_get` | Fetch full page by name |
 | `wiki_update` | Create or update a page (re-embeds automatically) |
+| `wiki_patch` | Surgical in-place edit by exact string replacement — auto-bumps `updated`, re-embeds only affected chunks |
 | `wiki_ingest` | Process a raw file into wiki pages via Claude |
 | `wiki_lint` | Health check: broken links, orphans, stale embeddings |
+| `wiki_reembed_all` | Re-embed stale pages (hash-based detection); pass `stale_only:false` to force all |
 | `wiki_delete` | Delete a page and remove its vectors |
 | `wiki_rename` | Rename a page and rewrite all `[[links]]` across the wiki |
 | `wiki_context_for` | Given a source file, auto-detect relevant wiki pages from filename + symbols |
 | `wiki_list` | List all pages with title, tags, updated date — optionally filter by tags |
+
+Staleness is determined by comparing each page's current body hash to the hash
+stored at last embed — so any out-of-band edit (direct file write, `git pull`,
+same-day re-edit) is detected reliably, regardless of `updated:` date granularity.
 
 ## Wiki page format
 
